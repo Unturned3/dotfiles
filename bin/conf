@@ -5,12 +5,12 @@ Usage: conf [args...]
     -h, --help
         Show this message.
 
-    update-master
-        Update master from origin and runs \`show_commits_behind_master\`.
+    update-main
+        Update main branch from origin and runs \`show_commits_behind_main\`.
         Assumes fast-forward is possible (no conflicts from local changes).
 
     status
-        Runs \`git status\` and \`show_commits_behind_master\`.
+        Runs \`git status\` and \`show_commits_behind_main\`.
 
     reset | checkout
         Runs the corresponding \`git\` command but with a confirmation dialog.
@@ -49,22 +49,22 @@ cmd="git --git-dir=$HOME/.dotfiles.git --work-tree=$HOME"
 #cmd="git"
 
 if [[ "$cmd" != "git" ]]; then
-	if [[ "$(pwd)" =~ "$HOME/.dotfiles-master" ]]; then
-		echo -e "${YELLOW}Do not use conf command in ~/.dotfiles-master!${NC}"
+	if [[ "$(pwd)" =~ "$HOME/.dotfiles-main" ]]; then
+		echo -e "${YELLOW}Do not use conf command in ~/.dotfiles-main!${NC}"
 		exit 1
 	fi
 fi
 
-show_commits_behind_master()
+show_commits_behind_main()
 {
-	behind_commits=$($cmd rev-list --left-only --oneline master...HEAD)
-	count=$($cmd rev-list --left-only --count master...HEAD)
+	behind_commits=$($cmd rev-list --left-only --oneline main...HEAD)
+	count=$($cmd rev-list --left-only --count main...HEAD)
 
 	if [[ $count != 0 ]]; then
-		echo -e "\n${RED}You are $count commit(s) behind the (local) master branch:${NC}"
+		echo -e "\n${RED}You are $count commit(s) behind the (local) main branch:${NC}"
 		echo -e "$behind_commits\n" | sed 's/^/  /'
 	else
-		echo -e "\n${GREEN}You are up-to-date with the (local) master branch.${NC}\n"
+		echo -e "\n${GREEN}You are up-to-date with the (local) main branch.${NC}\n"
 	fi
 }
 
@@ -74,18 +74,18 @@ case "$1" in
 		echo "$usage"
 		;;
 
-	'update-master' )
-		$cmd fetch origin master:master
-		show_commits_behind_master
+	'update-main' )
+		$cmd fetch origin main:main
+		show_commits_behind_main
 		;;
 
 	'status' )
 		$cmd status
 		cur_branch=$($cmd branch --show-current)
-		if [[ $cur_branch == 'master' ]]; then
+		if [[ $cur_branch == 'main' ]]; then
 			exit 0
 		fi
-		show_commits_behind_master
+		show_commits_behind_main
 		;;
 
 	'reset' | 'checkout' | 'switch' )

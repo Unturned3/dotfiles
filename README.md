@@ -30,12 +30,12 @@ $ conf rev-parse origin/babel
 6fccde72eddb8e2af236ed8e0171a1912177e6c0
 ```
 
-To pull the latest changes to master and update a system-specific branch without using `checkout`:
+To pull the latest changes to main and update a system-specific branch without using `checkout`:
 ```
-conf update-master
-conf merge master
+conf update-main
+conf merge main
 # Or rebase (but needs force push)
-conf rebase master
+conf rebase main
 ```
 Perhaps we should never push machine-specific branches? They aren't intended to be shared anyways. However, pushing could be for backup though.
 
