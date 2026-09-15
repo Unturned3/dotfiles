@@ -1,0 +1,103 @@
+#!/bin/bash
+
+usage=$(cat << EOF
+Usage: conf [args...]
+    -h, --help
+        Show this message.
+
+    update-master
+        Update master from origin and runs \`show_commits_behind_master\`.
+        Assumes fast-forward is possible (no conflicts from local changes).
+
+    status
+        Runs \`git status\` and \`show_commits_behind_master\`.
+
+    reset | checkout
+        Runs the corresponding \`git\` command but with a confirmation dialog.
+
+    *
+        Passes all arguments to \`git\`.
+EOF
+)
+
+if [ -t 1 ]; then
+	# We're outputting to a proper terminal. Use colors.
+	NC='\033[0m'
+	BLACK='\033[0;30m'
+	RED='\033[0;31m'
+	GREEN='\033[0;32m'
+	YELLOW='\033[0;33m'
+	BLUE='\033[0;34m'
+	PURPLE='\033[0;35m'
+	CYAN='\033[0;36m'
+	WHITE='\033[0;37m'
+else
+	# We're outputting to a pipe. No colors.
+	NC=''
+	BLACK=''
+	RED=''
+	GREEN=''
+	YELLOW=''
+	BLUE=''
+	PURPLE=''
+	CYAN=''
+	WHITE=''
+fi
+
+
+cmd="git --git-dir=$HOME/.dotfiles.git --work-tree=$HOME"
+#cmd="git"
+
+if [[ "$cmd" != "git" ]]; then
+	if [[ "$(pwd)" =~ "$HOME/.dotfiles-master" ]]; then
+		echo -e "${YELLOW}Do not use conf command in ~/.dotfiles-master!${NC}"
+		exit 1
+	fi
+fi
+
+show_commits_behind_master()
+{
+	behind_commits=$($cmd rev-list --left-only --oneline master...HEAD)
+	count=$($cmd rev-list --left-only --count master...HEAD)
+
+	if [[ $count != 0 ]]; then
+		echo -e "\n${RED}You are $count commit(s) behind the (local) master branch:${NC}"
+		echo -e "$behind_commits\n" | sed 's/^/  /'
+	else
+		echo -e "\n${GREEN}You are up-to-date with the (local) master branch.${NC}\n"
+	fi
+}
+
+case "$1" in
+
+	'' | '-h' | '--help' )
+		echo "$usage"
+		;;
+
+	'update-master' )
+		$cmd fetch origin master:master
+		show_commits_behind_master
+		;;
+
+	'status' )
+		$cmd status
+		cur_branch=$($cmd branch --show-current)
+		if [[ $cur_branch == 'master' ]]; then
+			exit 0
+		fi
+		show_commits_behind_master
+		;;
+
+	'reset' | 'checkout' | 'switch' )
+		echo -ne "${YELLOW}Proceed with $1 (y/n)?${NC} "
+		read answer
+		if [[ $answer == "y" ]]; then
+			$cmd "$@"
+		fi
+		;;
+
+	* )
+		$cmd "$@"
+		;;
+esac
+

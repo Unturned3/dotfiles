@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+
+NC='\033[0m'
+RED='\033[0;31m'
+GRN='\033[0;32m'
+YLW='\033[0;33m'
+BLU='\033[0;34m'
+PPL='\033[0;35m'
+CYN='\033[0;36m'
+
+dsts=(
+	'/Volumes/DISK/Backup'
+	'/Volumes/DRIVE2/Backup'
+	'/Volumes/SSD1/Backup'
+)
+
+for i in ${!dsts[@]}; do
+	echo "$i: ${dsts[i]}"
+done
+
+last=$(( ${#dsts[@]} - 1 ))
+
+while true; do
+	echo -ne "${BLU}Select backup location (0..$last): ${NC}"
+	read r
+	if [[ $r =~ ^[0-9]+$ && $r -ge 0 && $r -le $last ]]; then
+		break
+	fi
+	echo -e "${RED}Invalid input.${NC}"
+done
+
+dst=${dsts[$r]}
+
+if [[ ! -d $dst ]]; then
+	echo -e "${RED}Error: backup destination '$dst' not found!${NC}"
+	exit
+fi
+
+echo $(date) > ~/backup-info.txt
+echo $dst >> ~/backup-info.txt
+
+rsync "$@" \
+	-a -h \
+	--info=progress2 \
+	--delete --partial \
+	--no-inc-recursive \
+	--include-from "$HOME/backup-files.txt" \
+	--exclude '*' \
+	"$HOME/" "$dst"
+
+if [[ $? -ne 0 ]]; then
+	echo -e "${RED}There were errors.${NC}"
+else
+	echo -e "${GRN}Backup done.${NC}"
+fi
+

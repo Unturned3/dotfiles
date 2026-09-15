@@ -1,0 +1,163 @@
+
+# vim:ft=snippets:
+
+priority 1000
+
+snippet texInit "LaTeX init code"
+% Basic packages
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{mathtools}
+\usepackage{enumitem}
+\usepackage{array}
+\usepackage{float}
+
+\usepackage{stmaryrd}		% Double brackets
+
+\usepackage{logicproof}		% Natural deduction proofs
+\usepackage{multicol}		% Multi-column environment
+\usepackage{bm}				% Bold math symbols
+
+%\usepackage{bussproofs}		% Alternative package for ND-proofs
+% See: https://mathweb.ucsd.edu/~sbuss/ResearchWeb/bussproofs/BussGuide2_Smith2012.pdf
+
+% Monospace font environment for inline code snippets
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+
+% Text coloring
+\usepackage{xcolor}
+\newcommand{\red}[1]{\textcolor{red}{#1}}
+\newcommand{\green}[1]{\textcolor{green}{#1}}
+\newcommand{\blue}[1]{\textcolor{blue}{#1}}
+
+% Hyperlinks
+\usepackage{hyperref}
+
+% Custom math operators
+\DeclareMathOperator{\spn}{span}		% vector span
+\DeclareMathOperator{\im}{Im}			% image
+\DeclareMathOperator{\tr}{Tr}			% matrix trace
+\DeclareMathOperator{\id}{\textit{Id}}	% identity relation
+\DeclareMathOperator*{\argmin}{argmin}
+\DeclareMathOperator*{\argmax}{argmax}
+
+% Floor and ceiling commands
+\newcommand{\ceil}[1]{\lceil #1 \rceil}
+\newcommand{\floor}[1]{\lfloor #1 \rfloor}
+
+% Automatically style quotation marks
+\usepackage[autostyle, english=american]{csquotes}
+\MakeOuterQuote{"}
+
+% Automatically bolden math symbols in section titles
+% See: https://tex.stackexchange.com/a/124311/258079
+\makeatletter
+\g@addto@macro\bfseries{\boldmath}
+\makeatother
+
+% Amssymb math symbols
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\Z}{\mathbb{Z}}
+\newcommand{\Q}{\mathbb{Q}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\C}{\mathbb{C}}
+
+
+% Theorem / definition / remark / proof environments
+\usepackage{amsthm}
+
+%\newtheoremstyle{}		% Name of style
+%  {}					% Space above, empty = 'usual value'
+%  {}					% Space below
+%  {\itshape / \unshape}% Body font
+%  {}					% Indent amount
+%  {\bfseries}			% Head font
+%  {.}					% Punctuation after thm head
+%  {.5em / \newline}	% Space after head (\newline)
+%  {}					% Thm head spec
+
+\newtheoremstyle{myThmStyle}
+	{12pt}{12pt}
+	{\upshape}{}{\bfseries}
+	{}{ }{}
+
+\theoremstyle{myThmStyle}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{example}{Example}[section]
+
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+
+\newtheoremstyle{myRmk}		% Name of style
+  {}					% Space above, empty = 'usual value'
+  {}					% Space below
+  {\itshape / \unshape}% Body font
+  {}					% Indent amount
+  {\bfseries}			% Head font
+  {.}					% Punctuation after thm head
+  {.5em / \newline}	% Space after head (\newline)
+  {}					% Thm head spec
+
+%\theoremstyle{remark}
+%\theoremstyle{myRmk}
+\newtheorem*{remark}{Remark}
+
+% Indent text in proof environment
+\makeatletter
+\renewenvironment{proof}[1][\proofname]{\par
+  \pushQED{\qed}%
+  \normalfont \topsep6\p@\@plus6\p@\relax
+  \list{}{%
+    \settowidth{\leftmargin}{\itshape\proofname:\hskip\labelsep}%
+    \setlength{\labelwidth}{0pt}%
+    \setlength{\itemindent}{-\leftmargin}%
+  }%
+  \item[\hskip\labelsep\itshape#1\@addpunct{:}]\ignorespaces
+}{%
+  \popQED\endlist\@endpefalse
+}
+\makeatother
+
+
+
+endsnippet
+
+snippet texTemplate "Basic LaTeX Document Template" b
+\documentclass[12pt]{article}
+
+\usepackage[parfill]{parskip}
+\usepackage[a4paper, portrait, margin=1.0in]{geometry}
+
+\usepackage{tcolorbox}
+
+\usepackage{minted}
+\setminted{
+	fontfamily=tt,
+	fontsize=\footnotesize,
+	tabsize=4,
+}
+\usemintedstyle{perldoc}
+
+% Documentation: https://tinyurl.com/mr2nxb8c
+\usepackage{diffcoeff}
+
+\input{init.tex}
+
+\title{${0}}
+
+\author{Yusen Hu}
+
+\begin{document}	%%%%%
+
+\maketitle
+
+
+
+\end{document}		%%%%%
+
+endsnippet
+

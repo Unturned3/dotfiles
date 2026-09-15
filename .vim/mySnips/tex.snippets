@@ -1,0 +1,535 @@
+# vim:ft=snippets:
+
+
+# Override snippets defined elsewhere
+priority 1
+
+# disable bra-ket triggers
+clearsnippets \<(.*?)\|
+clearsnippets \|(.*?)\>
+clearsnippets (.*)\\bra{(.*?)}([^\|]*?)\>
+
+# disable auto braced subscript
+clearsnippets '__'
+
+
+snippet beg "Environment" w
+\begin{$1}
+$2${VISUAL}
+\end{$1}
+endsnippet
+
+
+snippet f "Fraction" w
+\frac{$1${VISUAL}}{$2}
+endsnippet
+
+snippet rt "Square Root" w
+\sqrt{$1${VISUAL}}
+endsnippet
+
+
+### citation, reference, & biblatex ###
+
+snippet cite "Citation" w
+\cite{$1}
+endsnippet
+
+snippet ref "Reference" w
+\ref{$1}
+endsnippet
+
+snippet href "Hyper Reference" w
+\hyperref[$1]{$2${VISUAL}}
+endsnippet
+
+### text formatting ###
+
+snippet mpg "Minipage" w
+\begin{minipage}{0.8\textwidth}
+	$1${VISUAL}
+\end{minipage}
+endsnippet
+
+snippet qte "Quote" w
+\begin{quote}
+	$1${VISUAL}
+\end{quote}
+endsnippet
+
+### itemize ###
+
+snippet item "Itemize" w
+\begin{itemize}
+	\item $1
+\end{itemize}
+endsnippet
+
+snippet "\titm" "Item" r
+\item
+endsnippet
+
+
+### Package {enumitem} ###
+
+snippet enum "Enumerate (Arabic)"
+\begin{enumerate}[label=\arabic*)]
+	\item $1
+\end{enumerate}
+endsnippet
+
+snippet enuma "Enumerate (Alphabetical)"
+\begin{enumerate}[label=(\alph*)]
+	\item $1
+\end{enumerate}
+endsnippet
+
+snippet enumi "Enumerate (Roman)"
+\begin{enumerate}[label=(\roman*)]
+	\item $1
+\end{enumerate}
+endsnippet
+
+snippet atc "Add to counter"
+\addtocounter{enumi}{$1}
+endsnippet
+
+
+
+### Sectioning Commands ###
+
+snippet chp "Chapter"
+\chapter{$1${VISUAL}}
+\label{chp:$1}
+endsnippet
+
+snippet sub "Sub section"
+\subsection{$1${VISUAL}}
+\label{sub:$1}
+endsnippet
+
+snippet ssub "Sub-sub section"
+\subsubsection{$1${VISUAL}}
+\label{ssub:$1}
+endsnippet
+
+snippet %%% "Comment separator" i
+%%%%%%%%%%
+endsnippet
+
+
+### Other logic ###
+
+snippet htp "Hoare triple" w
+\cbs{$1} \cd{$2} \cbs{$3}
+endsnippet
+
+
+
+### Package {logicproof} ###
+
+snippet ndp "Natural deduction proof"
+\begin{logicproof}{2}
+	$1
+\end{logicproof}
+endsnippet
+
+snippet ndsp "Natural deduction sub-proof" w
+\begin{subproof}
+	$1
+\end{subproof}
+endsnippet
+
+
+### Package {bussproofs} ###
+
+snippet pft "Prooftree" w
+\begin{prooftree}
+	$1
+\end{prooftree}
+endsnippet
+
+
+### Symbol Shortcuts ###
+
+snippet tms "\times" iA
+\times 
+endsnippet
+
+snippet lab "Label" i
+\label{$1${VISUAL}}
+endsnippet
+
+#snippet ab "Angle bracket" i
+#\ab{$1${VISUAL}}
+#endsnippet
+
+#snippet db "Double bracket" i
+#\db{$1${VISUAL}}
+#endsnippet
+
+snippet imp "Implies" i
+\implies 
+endsnippet
+
+snippet vb "Vertical bar (spaced)" i
+\;|\; 
+endsnippet
+
+snippet tgq "Equal by definition" i
+\triangleq 
+endsnippet
+
+snippet sse "Subset equals" i
+\subseteq 
+endsnippet
+
+snippet sm "Set minus" i
+\setminus 
+endsnippet
+
+snippet to "To" i
+\to 
+endsnippet
+
+snippet in "Element of" i
+\in 
+endsnippet
+
+snippet ex "Exists" i
+\exists ${0}
+endsnippet
+
+snippet fa "Forall" i
+\forall ${0}
+endsnippet
+
+snippet vd "Symbol \vdash" i
+\; \vdash \; 
+endsnippet
+
+snippet vD "Symbol \vDash" i
+\; \vDash \; 
+endsnippet
+
+snippet and "Symbol \land" w
+\land 
+endsnippet
+
+snippet or "Symbol \lor" w
+\lor 
+endsnippet
+
+snippet eqv "\equiv" wA
+\equiv 
+endsnippet
+
+
+### Bracketing Shortcuts ###
+
+snippet cb "Curly Braces" w
+\cb{$1${VISUAL}}
+endsnippet
+
+snippet cbs "Curly Braces (with space)" w
+\cbs{$1${VISUAL}}
+endsnippet
+
+snippet cbl "Curly Braces (Large)" w
+\cbl{$1${VISUAL}}
+endsnippet
+
+### Text Style Shortcuts ###
+
+snippet \t "Latex Text Mode" i
+\text{$1${VISUAL}}
+endsnippet
+
+snippet bf "Bold Text" w
+\textbf{$1${VISUAL}}
+endsnippet
+
+snippet it "Italics Text" w
+\textit{$1${VISUAL}}
+endsnippet
+
+snippet bn "mathbf" w
+\mathbf{$1${VISUAL}}
+endsnippet
+
+snippet bm "bm" w
+\bm{$1${VISUAL}}
+endsnippet
+
+snippet cd "Inline Code" w
+\cd{$1${VISUAL}}
+endsnippet
+
+
+### Figure Shortcuts ###
+
+snippet figh "Figure H"
+\begin{figure}[H]
+	\centering
+	\includegraphics[scale=0.4]{${0}}
+\end{figure}
+endsnippet
+
+
+
+
+### Math Env Shortcuts ###
+
+snippet mk "Inline math" wA
+$$1${VISUAL}$
+endsnippet
+
+snippet dm "Displayed math" wA
+\[
+	$1${VISUAL}
+\]$0
+endsnippet
+
+snippet eqn "Equation" w
+\begin{equation}
+	$1${VISUAL}
+\end{equation}
+endsnippet
+
+snippet eqn* "Equation (unlabeled)" w
+\begin{equation*}
+	$1${VISUAL}
+\end{equation*}
+endsnippet
+
+snippet ali "Align" w
+\begin{align}
+	$1${VISUAL}
+\end{align}
+endsnippet
+
+snippet ali* "Align (unlabeled)" w
+\begin{align*}
+	$1${VISUAL}
+\end{align*}
+endsnippet
+
+
+
+# Math Element Shortcuts
+
+snippet inf "Infinity" w
+\infty
+endsnippet
+
+snippet int "Integral" w
+\int_{$1}^{$2}{$3${VISUAL}}
+endsnippet
+
+snippet sum "Summation" w
+\sum_{$1}^{$2} $3${VISUAL}
+endsnippet
+
+snippet sumi "Summation (with index i)" w
+\sum_{i=1$1}^{$2} $3${VISUAL}
+endsnippet
+
+snippet tld "tilde" w
+\tilde{$1${VISUAL}}
+endsnippet
+
+snippet inv "inverse" i
+^{-1}
+endsnippet
+
+
+### Greek Letters / Symbols ###
+
+snippet alp "\alpha" wA
+\alpha
+endsnippet
+
+snippet bta "\beta" wA
+\beta
+endsnippet
+
+snippet gma "\gamma" wA
+\gamma
+endsnippet
+
+snippet dta "\delta" wA
+\delta
+endsnippet
+
+snippet eps "\epsilon" wA
+\epsilon
+endsnippet
+
+snippet pi "\pi" w
+\pi
+endsnippet
+
+snippet omg "\omega" wA
+\omega
+endsnippet
+snippet Omg "\Omega" wA
+\Omega
+endsnippet
+
+snippet sg "\sigma" w
+\sigma
+endsnippet
+
+snippet tta "\theta" wA
+\theta
+endsnippet
+
+snippet lmb "\lambda" wA
+\lambda
+endsnippet
+
+snippet phi "\phi" wA
+\phi
+endsnippet
+
+snippet psi "\psi" wA
+\psi
+endsnippet
+
+snippet rho "\rho" wA
+\rho
+endsnippet
+
+snippet nab "\nabla" w
+\nabla
+endsnippet
+
+
+
+
+### Vectors & Matrices ###
+
+global !p
+def create_matrix(snip):
+
+	matrix_str = (snip.buffer[snip.line].split('mat')[0]+'matrix').strip()
+
+	rows = 'x'.join(snip.buffer[snip.line].split("x", 2)[:-1])
+	cols = 'x'.join(snip.buffer[snip.line].split("x", 2)[-1:])
+
+	int_val = lambda string: int(''.join(s for s in string if s.isdigit()))
+
+	rows = int_val(rows)
+	cols = int_val(cols)
+
+	offset = cols + 1
+	old_spacing = snip.buffer[snip.line][:snip.buffer[snip.line].rfind('\t') + 1]
+
+	snip.buffer[snip.line] = ''
+
+	final_str = old_spacing + "\\begin{"+matrix_str+"}\n"
+	for i in range(rows):
+		final_str += old_spacing + '\t'
+		final_str += " & ".join(['$' + str(i * cols + j + offset) for j in range(cols)])
+
+		final_str += " \\\\\\\n"
+
+	final_str += old_spacing + "\\end{"+matrix_str+"}\n$0"
+
+	snip.expand_anon(final_str)
+endglobal
+
+pre_expand "create_matrix(snip)"
+snippet "(small|[abBpvV])?mat(rix)?(\d+)x(\d+)" "Generate (small|[abBpvV])?matrix of *rows* by *columns*" br
+endsnippet
+
+snippet bmat "Bracket Matrix" w
+\begin{bmatrix}
+	$1${VISUAL}
+\end{bmatrix}
+endsnippet
+
+snippet pmat "Parenthesis Matrix" w
+\begin{pmatrix}
+	$1${VISUAL}
+\end{pmatrix}
+endsnippet
+
+
+
+
+
+### Automatic Subscript for Variables ###
+
+#snippet '(^|\s|[$()\[\]{}])([A-Za-z])(\d)' "Auto subscript" wrA
+#`!p snip.rv = match.group(1)``!p snip.rv = match.group(2)`_`!p snip.rv = match.group(3)`
+#endsnippet
+#
+#snippet '(^|\s|[$])([A-Za-z])_(\d\d)' "Auto subscript 2 digits" wrA
+#`!p snip.rv = match.group(1)``!p snip.rv = match.group(2)`_{`!p snip.rv = match.group(3)`}
+#endsnippet
+
+snippet __ "Multi-char subscript" iA
+_{$1${VISUAL}}$2
+endsnippet
+
+snippet ^^ "Multi-char superscript" iA
+^{$1${VISUAL}}$2
+endsnippet
+
+### Code Environment ###
+
+snippet lst "Code environment" w
+\begin{lstlisting}[$2]
+$1${VISUAL}
+\end{lstlisting}
+endsnippet
+
+snippet mnt "Minted environment" w
+\begin{minted}{$1}
+$2${VISUAL}
+\end{minted}
+endsnippet
+
+snippet tmnt "TColorBoxMinted environment" w
+\begin{tcolorbox}
+\begin{minted}{$1}
+$2${VISUAL}
+\end{minted}
+\end{tcolorbox}
+endsnippet
+
+
+
+### Package {amsthm} ###
+
+snippet thm "Theorem" w
+\begin{theorem}[$1]
+	$2${VISUAL}
+\end{theorem}
+endsnippet
+
+snippet xmp "Example" w
+\begin{example}[$1]
+	$2${VISUAL}
+\end{example}
+endsnippet
+
+snippet rmk "Remark" w
+\begin{remark}[$2]
+	$1${VISUAL}
+\end{remark}
+endsnippet
+
+snippet prf "Proof" w
+\begin{proof}
+	$1${VISUAL}
+\end{proof}
+endsnippet
+
+snippet def "Definition" w
+\begin{definition}[$1]
+	$2${VISUAL}
+\end{definition}
+endsnippet
+

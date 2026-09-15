@@ -1,0 +1,2 @@
+#!/bin/bash
+git log --pretty=format:'%C(auto)%h %<(60,trunc)%s %ad%d' --date=format:'%m-%d %H:%M' "$@"
