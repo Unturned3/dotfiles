@@ -96,6 +96,11 @@ case "$1" in
 		fi
 		;;
 
+    'clean' )
+        echo -ne "${RED}Do not run 'conf clean'! This will delete all untracked files (i.e. basically everything) in your \$HOME!${NC}\n"
+        exit 1
+        ;;
+
 	* )
 		$cmd "$@"
 		;;
