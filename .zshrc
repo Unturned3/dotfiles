@@ -28,6 +28,8 @@ alias grep="grep --color=auto"
 #alias airport="/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport"
 #alias sicstus="rlwrap sicstus"
 
+# Prevent exiting shell via Ctrl-D
+setopt IGNORE_EOF
 
 # Make arrow keys do history prefix search
 autoload -U up-line-or-beginning-search
