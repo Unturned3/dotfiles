@@ -1,108 +1,153 @@
 #!/bin/bash
+set -euo pipefail
 
-usage=$(cat << EOF
+usage=$(cat <<'EOF'
 Usage: conf [args...]
     -h, --help
         Show this message.
 
     update-main
-        Update main branch from origin and runs \`show_commits_behind_main\`.
-        Assumes fast-forward is possible (no conflicts from local changes).
+        Fast-forward main from origin, then compare the current checkout to main.
+        Uses ~/.dotfiles-main when present; it must belong to this repository
+        and have main checked out. Otherwise, fetches directly into local main.
+        Does not merge main into the machine-specific branch.
 
-    status
-        Runs \`git status\` and \`show_commits_behind_main\`.
+    status [args...]
+        Run git status with the supplied arguments, then compare to local main.
+        For --porcelain output, omit the comparison to keep it machine-readable.
 
-    reset | checkout
-        Runs the corresponding \`git\` command but with a confirmation dialog.
+    reset | checkout | switch
+        Run the corresponding git command after confirmation.
+
+    clean
+        Refuse to clean the home-directory worktree.
 
     *
-        Passes all arguments to \`git\`.
+        Pass all arguments to git. These confirmation prompts are conveniences,
+        not a sandbox: aliases and git global options can bypass them.
 EOF
 )
 
-if [ -t 1 ]; then
-	# We're outputting to a proper terminal. Use colors.
-	NC='\033[0m'
-	BLACK='\033[0;30m'
-	RED='\033[0;31m'
-	GREEN='\033[0;32m'
-	YELLOW='\033[0;33m'
-	BLUE='\033[0;34m'
-	PURPLE='\033[0;35m'
-	CYAN='\033[0;36m'
-	WHITE='\033[0;37m'
-else
-	# We're outputting to a pipe. No colors.
-	NC=''
-	BLACK=''
-	RED=''
-	GREEN=''
-	YELLOW=''
-	BLUE=''
-	PURPLE=''
-	CYAN=''
-	WHITE=''
+BLACK='' RED='' GREEN='' YELLOW='' BLUE='' PURPLE='' CYAN='' WHITE='' NC=''
+if [[ -t 1 ]]; then
+    BLACK=$'\033[0;30m'
+    RED=$'\033[0;31m'
+    GREEN=$'\033[0;32m'
+    YELLOW=$'\033[0;33m'
+    BLUE=$'\033[0;34m'
+    PURPLE=$'\033[0;35m'
+    CYAN=$'\033[0;36m'
+    WHITE=$'\033[0;37m'
+    NC=$'\033[0m'
 fi
 
+cmd=(git --git-dir="$HOME/.dotfiles.git" --work-tree="$HOME")
+main_worktree="$HOME/.dotfiles-main"
 
-cmd="git --git-dir=$HOME/.dotfiles.git --work-tree=$HOME"
-#cmd="git"
+die()
+{
+    printf 'conf: %s\n' "$*" >&2
+    exit 1
+}
 
-if [[ "$cmd" != "git" ]]; then
-	if [[ "$(pwd)" =~ "$HOME/.dotfiles-main" ]]; then
-		echo -e "${YELLOW}Do not use conf command in ~/.dotfiles-main!${NC}"
-		exit 1
-	fi
+# Handle help before repository/path checks, including when no argument is given.
+case "${1-}" in
+    '' | '-h' | '--help')
+        printf '%s\n' "$usage"
+        exit 0
+        ;;
+esac
+
+# Resolve symlinks and match directory boundaries, not arbitrary substrings.
+if [[ -d "$main_worktree" ]]; then
+    main_worktree=$(cd "$main_worktree" && pwd -P)
+    current_dir=$(pwd -P)
+    case "$current_dir" in
+        "$main_worktree" | "$main_worktree"/*)
+            die 'Use git directly inside ~/.dotfiles-main.'
+            ;;
+    esac
 fi
 
 show_commits_behind_main()
 {
-	behind_commits=$($cmd rev-list --left-only --oneline main...HEAD)
-	count=$($cmd rev-list --left-only --count main...HEAD)
+    local counts behind ahead behind_commits
+    counts=$("${cmd[@]}" rev-list --left-right --count refs/heads/main...HEAD) || return $?
+    read -r behind ahead <<< "$counts"
 
-	if [[ $count != 0 ]]; then
-		echo -e "\n${RED}You are $count commit(s) behind the (local) main branch:${NC}"
-		echo -e "$behind_commits\n" | sed 's/^/  /'
-	else
-		echo -e "\n${GREEN}You are up-to-date with the (local) main branch.${NC}\n"
-	fi
+    if [[ "$behind" != 0 ]]; then
+        behind_commits=$("${cmd[@]}" log --format='  %h %s' HEAD..refs/heads/main --) || return $?
+        printf '\n%sLocal main has %s commit(s) not in your current checkout:%s\n' "$RED" "$behind" "$NC"
+        printf '%s\n' "$behind_commits"
+        if [[ "$ahead" != 0 ]]; then
+            printf 'Your checkout also has %s commit(s) not in local main; the histories have diverged.\n' "$ahead"
+        fi
+        printf '\n'
+    elif [[ "$ahead" != 0 ]]; then
+        printf '\n%sYour checkout contains all commits from local main, plus %s additional commit(s).%s\n\n' "$GREEN" "$ahead" "$NC"
+    else
+        printf '\n%sYour checkout is at the same commit as local main.%s\n\n' "$GREEN" "$NC"
+    fi
+}
+
+update_main()
+{
+    local common_dir expected_dir branch
+    if [[ -e "$main_worktree" || -L "$main_worktree" ]]; then
+        # Avoid accidentally pulling another repository or a different branch.
+        [[ -e "$main_worktree/.git" ]] || die '~/.dotfiles-main is not a Git worktree.'
+        common_dir=$(git -C "$main_worktree" rev-parse --git-common-dir) || return $?
+        common_dir=$(cd "$main_worktree" && cd "$common_dir" && pwd -P) || return $?
+        expected_dir=$(cd "$HOME/.dotfiles.git" && pwd -P) || return $?
+        [[ "$common_dir" == "$expected_dir" ]] || die '~/.dotfiles-main belongs to a different repository.'
+        branch=$(git -C "$main_worktree" symbolic-ref --quiet HEAD) || die '~/.dotfiles-main must have main checked out (not detached HEAD).'
+        [[ "$branch" == refs/heads/main ]] || die '~/.dotfiles-main must have main checked out.'
+
+        # Explicit flags keep local pull/autostash preferences from changing this operation.
+        git -C "$main_worktree" pull --ff-only --no-rebase --no-autostash origin main || return $?
+    else
+        # Retain support for machines without a main worktree. Git will refuse
+        # if main is checked out elsewhere, rather than desynchronizing it.
+        "${cmd[@]}" fetch origin refs/heads/main:refs/heads/main || return $?
+    fi
 }
 
 case "$1" in
-
-	'' | '-h' | '--help' )
-		echo "$usage"
-		;;
-
-	'update-main' )
-		$cmd fetch origin main:main
-		show_commits_behind_main
-		;;
-
-	'status' )
-		$cmd status
-		cur_branch=$($cmd branch --show-current)
-		if [[ $cur_branch == 'main' ]]; then
-			exit 0
-		fi
-		show_commits_behind_main
-		;;
-
-	'reset' | 'checkout' | 'switch' )
-		echo -ne "${YELLOW}Proceed with $1 (y/n)?${NC} "
-		read answer
-		if [[ $answer == "y" ]]; then
-			$cmd "$@"
-		fi
-		;;
-
-    'clean' )
-        echo -ne "${RED}Do not run 'conf clean'! This will delete all untracked files (i.e. basically everything) in your \$HOME!${NC}\n"
-        exit 1
+    'update-main')
+        [[ $# == 1 ]] || die 'update-main does not accept arguments.'
+        update_main || exit $?
+        show_commits_behind_main
         ;;
 
-	* )
-		$cmd "$@"
-		;;
-esac
+    'status')
+        "${cmd[@]}" "$@" || exit $?
+        # Do not append human-readable text to Git's machine-readable output.
+        for arg in "$@"; do
+            [[ "$arg" != -- ]] || break
+            case "$arg" in
+                --porcelain | --porcelain=* | -z | -[!-]*z*) exit 0 ;;
+            esac
+        done
+        show_commits_behind_main
+        ;;
 
+    'reset' | 'checkout' | 'switch')
+        printf '%sProceed with %s (y/n)?%s ' "$YELLOW" "$1" "$NC" >&2
+        if ! IFS= read -r answer; then
+            die 'No confirmation received; command cancelled.'
+        fi
+        if [[ "$answer" == y ]]; then
+            "${cmd[@]}" "$@"
+        else
+            die 'Command cancelled.'
+        fi
+        ;;
+
+    'clean')
+        die "Do not run 'conf clean': it can delete untracked files throughout your home directory."
+        ;;
+
+    *)
+        "${cmd[@]}" "$@"
+        ;;
+esac
