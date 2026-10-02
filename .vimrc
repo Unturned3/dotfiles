@@ -15,6 +15,14 @@ set updatetime=250	" milliseconds
 "set pumwidth=50
 "set completeopt=menu,longest "meuone,preview,noinsert
 
+if has('clipboard_provider') && exists('+clipmethod')
+    let g:osc52_force_avail = v:true
+    silent! packadd osc52
+    if has_key(v:clipproviders, 'osc52')
+        set clipmethod+=osc52
+    endif
+endif
+
 set tabstop=4
 set softtabstop=4
 set shiftwidth=4
