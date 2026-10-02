@@ -15,7 +15,7 @@ set updatetime=250	" milliseconds
 "set pumwidth=50
 "set completeopt=menu,longest "meuone,preview,noinsert
 
-if has('clipboard_provider') && exists('+clipmethod')
+if !has('gui_running') && has('clipboard_provider') && exists('+clipmethod')
     let g:osc52_force_avail = v:true
     silent! packadd osc52
     if has_key(v:clipproviders, 'osc52')
