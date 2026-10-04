@@ -12,3 +12,5 @@ if [ ! -f "$HOME/.vim/autoload/plug.vim" ]; then
 fi
 
 git config --global merge.conflictStyle diff3
+
+uv tool install --upgrade "git+https://github.com/unturned3/codex-conversation-tree.git@main"
