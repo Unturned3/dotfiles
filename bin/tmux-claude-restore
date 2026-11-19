@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+"""tmux-claude-restore: reopen Claude Code conversations after a tmux-resurrect restore.
+
+tmux-resurrect saves the command line a pane was started with (usually just
+`claude`), which does not say which conversation the pane is in. This script
+fills that gap through two resurrect hooks set in ~/.tmux.conf:
+
+    tmux-claude-restore save      (post-save-all)
+        Record which conversation each pane is in, next to resurrect's save.
+
+    tmux-claude-restore restore [--run] [--dry-run]      (post-restore-all)
+        Type `claude --resume <id>` into each restored pane's shell.
+        Without --run the command is typed but Enter is not pressed.
+        --dry-run only prints what would be typed where.
+
+Panes are matched by session name, window index and pane index, which
+resurrect preserves. A pane is only typed into if it is sitting at an idle
+shell and its conversation is not already open somewhere.
+"""
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+SHELLS = {"bash", "zsh", "fish", "sh", "dash", "ksh"}
+CLAUDE = {"claude", "claude.exe"}
+MAP_NAME = "claude_sessions.txt"
+SAFE_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+WAIT_FOR_SHELLS = 15  # seconds to wait for restored panes to reach a prompt
+
+
+class Abort(Exception):
+    pass
+
+
+def tmux(*args, ok=False):
+    r = subprocess.run(["tmux", *args], capture_output=True, text=True)
+    if r.returncode and not ok:
+        raise Abort(r.stderr.strip() or f"tmux {args[0]} failed")
+    return r.stdout.rstrip("\n")
+
+
+def notify(text):
+    print(text)
+    tmux("display-message", f"claude-restore: {text}", ok=True)
+
+
+# ── processes ───────────────────────────────────────────────────────────────
+
+class Proc:
+    def __init__(self, pid, ppid, name, start):
+        self.pid, self.ppid, self.name, self.start = pid, ppid, name, start
+        self.children = []
+
+    @property
+    def argv(self):
+        try:
+            raw = Path(f"/proc/{self.pid}/cmdline").read_bytes()
+        except OSError:
+            return []
+        return [a.decode(errors="replace") for a in raw.split(b"\0") if a]
+
+
+def snapshot():
+    procs = {}
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            stat = Path(f"/proc/{entry}/stat").read_text()
+        except OSError:
+            continue
+        name = stat[stat.index("(") + 1: stat.rindex(")")]
+        rest = stat[stat.rindex(")") + 2:].split()
+        procs[int(entry)] = Proc(int(entry), int(rest[1]), name, int(rest[19]))
+    for p in procs.values():
+        if p.ppid in procs:
+            procs[p.ppid].children.append(p)
+    return procs
+
+
+def conversation_of(p):
+    """(kind, id, cwd) for a Claude Code process, or None."""
+    if p.name not in CLAUDE:
+        return None
+    argv = p.argv
+    if argv[1:2] == ["attach"] and len(argv) > 2:
+        return "attach", argv[2], ""
+    try:
+        info = json.loads((Path.home() / ".claude/sessions" / f"{p.pid}.json").read_text())
+    except (OSError, ValueError):
+        return None
+    if str(info.get("procStart")) != str(p.start) or not info.get("sessionId"):
+        return None  # stale file from a reused pid
+    return "resume", info["sessionId"], info.get("cwd", "")
+
+
+def conversation_under(root):
+    """The conversation of the nearest Claude Code process at or below root."""
+    queue = [root]
+    while queue:
+        p = queue.pop(0)
+        found = conversation_of(p)
+        if found:
+            return found
+        queue.extend(p.children)
+    return None
+
+
+def open_conversations(procs):
+    return {found[:2] for found in map(conversation_of, procs.values()) if found}
+
+
+# ── resurrect's files ───────────────────────────────────────────────────────
+
+def resurrect_dir():
+    configured = tmux("show-options", "-gqv", "@resurrect-dir", ok=True)
+    if configured:
+        home = str(Path.home())
+        return Path(configured.replace("$HOME", home).replace("~", home))
+    legacy = Path.home() / ".tmux/resurrect"
+    if legacy.is_dir():
+        return legacy
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "tmux/resurrect"
+
+
+def current_save(directory):
+    """Name of the save file resurrect would restore from."""
+    last = directory / "last"
+    if not last.exists():
+        raise Abort(f"no resurrect save found in {directory}")
+    return last.resolve().name
+
+
+# ── save ────────────────────────────────────────────────────────────────────
+
+def save():
+    directory = resurrect_dir()
+    belongs_to = current_save(directory)
+    procs = snapshot()
+    fmt = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}"
+    lines, seen = [], set()
+    for row in tmux("list-panes", "-a", "-F", fmt).splitlines():
+        session, window, pane, pid = row.split("\t")
+        root = procs.get(int(pid))
+        found = conversation_under(root) if root else None
+        if not found or (session, window, pane) in seen:
+            continue
+        seen.add((session, window, pane))
+        lines.append("\t".join([session, window, pane, *found]))
+    target = directory / MAP_NAME
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(f"# save: {belongs_to}\n" + "".join(line + "\n" for line in lines))
+    tmp.replace(target)
+    print(f"recorded {len(lines)} Claude Code conversation(s) in {target}")
+
+
+# ── restore ─────────────────────────────────────────────────────────────────
+
+def read_map(directory):
+    path = directory / MAP_NAME
+    if not path.exists():
+        raise Abort(f"nothing recorded yet ({path} is missing)")
+    rows = path.read_text().splitlines()
+    header = rows[0] if rows else ""
+    if header != f"# save: {current_save(directory)}":
+        raise Abort("recorded conversations belong to a different save; not restoring them")
+    entries = []
+    for row in rows[1:]:
+        parts = row.split("\t")
+        if len(parts) == 6:
+            entries.append(dict(zip(["session", "window", "pane", "kind", "id", "cwd"], parts)))
+    return entries
+
+
+def live_panes():
+    fmt = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_id}\t#{pane_pid}\t#{pane_current_path}"
+    panes = {}
+    for row in tmux("list-panes", "-a", "-F", fmt).splitlines():
+        session, window, pane, pane_id, pid, path = row.split("\t")
+        panes.setdefault((session, window, pane), {"id": pane_id, "pid": int(pid), "path": path})
+    return panes
+
+
+def at_idle_shell(pane, procs):
+    root = procs.get(pane["pid"])
+    return bool(root) and root.name in SHELLS and not root.children
+
+
+def command_for(entry, pane):
+    verb = "--resume" if entry["kind"] == "resume" else "attach"
+    command = f"claude {verb} {entry['id']}"
+    if entry["cwd"] and entry["cwd"] != pane["path"]:
+        command = f"cd {shlex.quote(entry['cwd'])} && {command}"
+    return command
+
+
+def restore(run, dry_run):
+    entries = read_map(resurrect_dir())
+    skipped, waiting = [], []
+    panes = live_panes()
+    already_open = open_conversations(snapshot())
+    for entry in entries:
+        where = f"{entry['session']}:{entry['window']}.{entry['pane']}"
+        pane = panes.get((entry["session"], entry["window"], entry["pane"]))
+        if entry["kind"] not in ("resume", "attach") or not SAFE_ID.match(entry["id"]):
+            skipped.append((where, "unusable entry"))
+        elif not pane:
+            skipped.append((where, "pane does not exist"))
+        elif (entry["kind"], entry["id"]) in already_open:
+            skipped.append((where, "conversation is already open"))
+        else:
+            waiting.append((where, entry, pane))
+
+    # A restored pane first replays its scrollback, then starts a shell. Type
+    # only once the pane has been at an idle shell for two checks in a row.
+    done, ready_before = [], set()
+    deadline = time.monotonic() + (0 if dry_run else WAIT_FOR_SHELLS)
+    while waiting:
+        procs = snapshot()
+        still_waiting = []
+        for where, entry, pane in waiting:
+            if not at_idle_shell(pane, procs):
+                ready_before.discard(where)
+                still_waiting.append((where, entry, pane))
+            elif where in ready_before or dry_run:
+                command = command_for(entry, pane)
+                if not dry_run:
+                    tmux("send-keys", "-t", pane["id"], "-l", command)
+                    if run:
+                        tmux("send-keys", "-t", pane["id"], "Enter")
+                done.append((where, command))
+            else:
+                ready_before.add(where)
+                still_waiting.append((where, entry, pane))
+        waiting = still_waiting
+        if time.monotonic() >= deadline:
+            break
+        if waiting:
+            time.sleep(0.3)
+    skipped += [(where, "pane is not at an idle shell") for where, _, _ in waiting]
+
+    for where, command in done:
+        print(f"  {where}  {command}")
+    for where, why in skipped:
+        print(f"  {where}  skipped: {why}")
+    action = "would type" if dry_run else ("resumed" if run else "pre-typed")
+    summary = f"{action} {len(done)} conversation(s)"
+    if skipped:
+        summary += f", skipped {len(skipped)}"
+    if dry_run:
+        print(summary)
+    else:
+        notify(summary)
+
+
+def main(argv):
+    if argv == ["save"]:
+        save()
+    elif argv[:1] == ["restore"] and set(argv[1:]) <= {"--run", "--dry-run"}:
+        restore(run="--run" in argv, dry_run="--dry-run" in argv)
+    else:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except Abort as err:
+        notify(str(err))
+        sys.exit(1)

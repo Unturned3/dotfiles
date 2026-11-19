@@ -1,0 +1,430 @@
+#!/usr/bin/env python3
+"""tmux-kill-guard: check for ongoing work before tmux kills things.
+
+Wired up in ~/.tmux.conf, which aliases kill-pane / kill-window / kill-session /
+kill-server to this script. For every pane the kill would destroy, it walks the
+pane's process tree and asks the CHECKS below whether each process is doing
+something worth keeping. If anything is, it lists what and asks first.
+
+    tmux-kill-guard status                 show the verdict for every pane (handy
+                                           when tuning the checks)
+    tmux-kill-guard [--confirm] kill-pane|kill-window|kill-session|kill-server [-a] [-t target]
+
+Bypass: the short command names are not guarded, so `killp`, `killw`,
+`kill-ses` and `kill-ser` always kill immediately.
+"""
+import json
+import os
+import shlex
+import subprocess
+import sys
+import termios
+import tty
+from pathlib import Path
+
+# ════════════════════════════════════════════════════════════════════════════
+# Custom checks: edit this section.
+#
+# Each check gets a process `p` (p.name, p.argv, p.pid, p.age, p.children) and
+# the pane it lives in (a dict of tmux fields: session_name, window_index,
+# pane_index, pane_id, ...) and returns one of:
+#
+#   None      no opinion; the next check is asked
+#   OK        safe to kill (its children are not looked at)
+#   DESCEND   not interesting itself, judge its children instead
+#   "text"    ongoing work; the text is shown in the warning
+#
+# Checks run in the order they are defined and the first opinion wins. A
+# process no check has an opinion about counts as ongoing work.
+# ════════════════════════════════════════════════════════════════════════════
+
+OK, DESCEND = object(), object()
+CHECKS = []
+
+
+def check(fn):
+    CHECKS.append(fn)
+    return fn
+
+
+# Shells and wrappers: only what runs inside them matters.
+SHELLS = {"bash", "zsh", "fish", "sh", "dash", "ksh", "tcsh", "sudo", "su", "script", "time"}
+
+# Programs that hold no state worth protecting.
+HARMLESS = {"tmux", "less", "more", "man", "top", "htop", "btop", "watch"}
+
+CLAUDE_STATUS = {
+    "busy": "working",
+    "shell": "running a background shell command",
+    "waiting": "waiting for your input",
+}
+
+
+@check
+def claude_code(p, pane):
+    """Claude Code is only ongoing work while the conversation is not idle."""
+    if p.name not in ("claude", "claude.exe"):
+        return None
+    if p.argv[1:2] == ["attach"]:
+        return OK  # a viewer onto a background job, which outlives the pane
+    try:
+        info = json.loads((Path.home() / ".claude/sessions" / f"{p.pid}.json").read_text())
+    except (OSError, ValueError):
+        return "Claude Code (state unknown)"
+    if str(info.get("procStart")) != str(p.start):
+        return "Claude Code (state unknown)"  # stale file from a reused pid
+    status = info.get("status", "unknown")
+    if status == "idle":
+        return OK
+    name = str(info.get("name", "")).strip('"')
+    return f"Claude Code “{clip(name, 40)}” is {CLAUDE_STATUS.get(status, status)}"
+
+
+@check
+def shells(p, pane):
+    if p.name in SHELLS:
+        return DESCEND
+
+
+@check
+def harmless(p, pane):
+    if p.name in HARMLESS:
+        return OK
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Engine
+# ════════════════════════════════════════════════════════════════════════════
+
+SELF = os.path.realpath(__file__)
+REAL = {"kill-pane": "killp", "kill-window": "killw", "kill-session": "kill-ses", "kill-server": "kill-ser"}
+FIELDS = ["session_id", "session_name", "window_id", "window_index", "window_name",
+          "pane_id", "pane_index", "pane_pid", "pane_current_command"]
+FMT = "\t".join("#{%s}" % f for f in FIELDS)
+TICKS = os.sysconf("SC_CLK_TCK")
+
+
+def clip(text, width):
+    return text if len(text) <= width else text[: width - 1] + "…"
+
+
+class Proc:
+    def __init__(self, pid, ppid, name, start):
+        self.pid, self.ppid, self.name, self.start = pid, ppid, name, start
+        self.children = []
+
+    @property
+    def argv(self):
+        try:
+            raw = Path(f"/proc/{self.pid}/cmdline").read_bytes()
+        except OSError:
+            return []
+        return [a.decode(errors="replace") for a in raw.split(b"\0") if a]
+
+    @property
+    def age(self):
+        """Seconds since the process started."""
+        uptime = float(Path("/proc/uptime").read_text().split()[0])
+        return max(0, uptime - self.start / TICKS)
+
+
+def snapshot():
+    procs = {}
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            stat = Path(f"/proc/{entry}/stat").read_text()
+        except OSError:
+            continue
+        name = stat[stat.index("(") + 1: stat.rindex(")")]
+        rest = stat[stat.rindex(")") + 2:].split()
+        # "tmux: client" -> "tmux"
+        procs[int(entry)] = Proc(int(entry), int(rest[1]), name.split(":")[0], int(rest[19]))
+    for p in procs.values():
+        if p.ppid in procs:
+            procs[p.ppid].children.append(p)
+    return procs
+
+
+def own_ancestry(procs):
+    chain, pid = set(), os.getpid()
+    while pid in procs:
+        chain.add(pid)
+        pid = procs[pid].ppid
+    return chain
+
+
+def fmt_age(seconds):
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        return f"{seconds // 3600}h{seconds % 3600 // 60:02d}m"
+    return f"{seconds // 86400}d{seconds % 86400 // 3600}h"
+
+
+def judge(p, pane, mine, found):
+    """Append a description of every piece of ongoing work under p to found."""
+    if p.pid in mine:  # this script, or whatever launched it
+        if p.pid != os.getpid():
+            for child in p.children:
+                judge(child, pane, mine, found)
+        return
+    for fn in CHECKS:
+        verdict = fn(p, pane)
+        if verdict is None:
+            continue
+        if verdict is DESCEND:
+            for child in p.children:
+                judge(child, pane, mine, found)
+        elif verdict is not OK:
+            found.append(str(verdict))
+        return
+    cmd = " ".join(p.argv) or p.name
+    found.append(f"{clip(cmd, 60)} (running for {fmt_age(p.age)})")
+
+
+def inspect(panes):
+    """Return [(pane, [ongoing work, ...])] for the panes that have any."""
+    procs = snapshot()
+    mine = own_ancestry(procs)
+    result = []
+    for pane in panes:
+        found = []
+        root = procs.get(int(pane["pane_pid"]))
+        if root:
+            judge(root, pane, mine, found)
+        if found:
+            result.append((pane, found))
+    return result
+
+
+# ── tmux plumbing ───────────────────────────────────────────────────────────
+
+class Abort(Exception):
+    pass
+
+
+def tmux(*args, ok=False):
+    r = subprocess.run(["tmux", *args], capture_output=True, text=True)
+    if r.returncode and not ok:
+        raise Abort(r.stderr.strip() or f"tmux {args[0]} failed")
+    return r.stdout.rstrip("\n")
+
+
+def list_panes(*args):
+    seen, panes = set(), []
+    for line in tmux("list-panes", *args, "-F", FMT).splitlines():
+        pane = dict(zip(FIELDS, line.split("\t")))
+        if pane["pane_id"] not in seen:  # a window linked into two sessions
+            seen.add(pane["pane_id"])
+            panes.append(pane)
+    return panes
+
+
+def pane_label(pane):
+    return f"{pane['session_name']}:{pane['window_index']}.{pane['pane_index']}"
+
+
+def current_context():
+    """(session_id, window_id, pane_id) the kill command was issued from."""
+    ctx = tmux("show-options", "-gqv", "@kg_ctx", ok=True).split()
+    if len(ctx) == 3:  # left by the alias in tmux.conf; use once
+        tmux("set-option", "-gu", "@kg_ctx", ok=True)
+        return ctx
+    return tmux("display-message", "-p", "#{session_id} #{window_id} #{pane_id}").split()
+
+
+def parse_args(cmd, args):
+    allowed = {"kill-pane": "at", "kill-window": "at", "kill-session": "aCt", "kill-server": ""}[cmd]
+    flags, target, i = set(), None, 0
+    while i < len(args):
+        arg = args[i]
+        if not arg.startswith("-") or len(arg) < 2 or arg[1] not in allowed:
+            raise Abort(f"{cmd}: unexpected argument {arg!r}")
+        if arg[1] == "t":
+            if len(arg) > 2:
+                target = arg[2:]
+            elif i + 1 < len(args):
+                i += 1
+                target = args[i]
+            else:
+                raise Abort(f"{cmd}: -t needs a target")
+        elif len(arg) == 2:
+            flags.add(arg[1])
+        else:
+            raise Abort(f"{cmd}: unexpected argument {arg!r}")
+        i += 1
+    return flags, target
+
+
+def plan(cmd, args):
+    """Work out (panes that would die, description, arguments for the real kill)."""
+    flags, target = parse_args(cmd, args)
+    everything = list_panes("-a")
+    others = "a" in flags
+
+    if cmd == "kill-server":
+        sessions = len({p["session_id"] for p in everything})
+        return everything, f"the tmux server ({sessions} sessions, {len(everything)} panes)", []
+
+    if target is None:
+        sid, wid, pid = current_context()
+        target = {"kill-pane": pid, "kill-window": f"{sid}:{wid}", "kill-session": sid}[cmd]
+
+    if cmd == "kill-session":
+        if "C" in flags:  # only clears alerts, kills nothing
+            return [], "", args
+        inside = list_panes("-s", "-t", target)
+        sid, name = inside[0]["session_id"], inside[0]["session_name"]
+        if others:
+            doomed = [p for p in everything if p["session_id"] != sid]
+            return doomed, f"all sessions except {name}", ["-a", "-t", sid]
+        return inside, f"session {name}", ["-t", sid]
+
+    if cmd == "kill-window":
+        inside = list_panes("-t", target)
+        first = inside[0]
+        sid, wid = first["session_id"], first["window_id"]
+        where = f"{first['session_name']}:{first['window_index']} ({first['window_name']})"
+        if others:
+            doomed = [p for p in list_panes("-s", "-t", sid) if p["window_id"] != wid]
+            return doomed, f"all windows in {first['session_name']} except {where}", ["-a", "-t", f"{sid}:{wid}"]
+        return inside, f"window {where}", ["-t", f"{sid}:{wid}"]
+
+    pid = tmux("display-message", "-p", "-t", target, "#{pane_id}")
+    this = next(p for p in everything if p["pane_id"] == pid)
+    if others:
+        doomed = [p for p in everything if p["window_id"] == this["window_id"] and p["pane_id"] != pid]
+        return doomed, f"all panes in this window except {pane_label(this)}", ["-a", "-t", pid]
+    return [this], f"pane {pane_label(this)} ({this['pane_current_command']})", ["-t", pid]
+
+
+# ── output ──────────────────────────────────────────────────────────────────
+
+BOLD, RED, DIM, RESET = "\033[1m", "\033[31m", "\033[2m", "\033[0m"
+
+
+def report_lines(busy):
+    """Plain-text lines, one per piece of ongoing work."""
+    width = max(len(pane_label(pane)) for pane, _ in busy)
+    lines = []
+    for pane, found in busy:
+        for item in found:
+            lines.append(f"{pane_label(pane):<{width}}  {item}")
+    return lines
+
+
+def ask(question):
+    """Single-keypress y/n."""
+    sys.stdout.write(f"{question} {DIM}[y/N]{RESET} ")
+    sys.stdout.flush()
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        key = os.read(fd, 1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+    print()
+    return key in (b"y", b"Y")
+
+
+def run_interactive(cmd, args, confirm):
+    doomed, what, real_args = plan(cmd, args)
+    busy = inspect(doomed)
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if busy:
+        print(f"\n {BOLD}Killing {what} would interrupt:{RESET}\n")
+        for line in report_lines(busy):
+            print(f"  {RED}●{RESET} {line}")
+        print()
+        if not interactive:
+            print(f" Not killed. To kill anyway: tmux {shlex.join([REAL[cmd], *real_args])}")
+            return 1
+        if not ask(f" {BOLD}Kill anyway?{RESET}"):
+            return 1
+    elif confirm and what:
+        if not interactive:
+            raise Abort("--confirm needs a terminal")
+        if not ask(f"\n Nothing running. {BOLD}Kill {what}?{RESET}"):
+            return 1
+    tmux(REAL[cmd], *real_args)
+    return 0
+
+
+def run_from_key(cmd, args, client):
+    """Called by a key binding, with no terminal of our own.
+
+    Nothing running: the usual one-line y/n in the status line.
+    Ongoing work:    a popup listing it.
+    """
+    doomed, what, real_args = plan(cmd, args)
+    busy = inspect(doomed)
+    if not busy:
+        quoted = " ".join("'%s'" % a for a in real_args)
+        tmux("confirm-before", "-t", client, "-p", f"kill {what}? (y/n)", f"{REAL[cmd]} {quoted}")
+        return 0
+    lines = report_lines(busy)
+    width = max(len(what) + 34, *(len(line) + 6 for line in lines))
+    height = len(lines) + 7
+    size = tmux("display-message", "-p", "-c", client, "#{client_width} #{client_height}", ok=True).split()
+    if len(size) == 2:
+        width, height = min(width, int(size[0])), min(height, int(size[1]))
+    tmux("display-popup", "-c", client, "-w", str(width), "-h", str(height), "-T", f" {cmd} ",
+         "-E", SELF, "--confirm", cmd, *real_args, ok=True)
+    return 0
+
+
+def run_status():
+    panes = list_panes("-a")
+    busy = {pane["pane_id"]: found for pane, found in inspect(panes)}
+    width = max((len(pane_label(p)) for p in panes), default=0)
+    for pane in panes:
+        found = busy.get(pane["pane_id"])
+        if not found:
+            print(f"  {DIM}○ {pane_label(pane):<{width}}  nothing running{RESET}")
+        for item in found or []:
+            print(f"  {RED}●{RESET} {pane_label(pane):<{width}}  {item}")
+    return 0
+
+
+def main(argv):
+    confirm = from_key = False
+    client = None
+    while argv and argv[0].startswith("--"):
+        opt = argv.pop(0)
+        if opt == "--confirm":
+            confirm = True
+        elif opt == "--key":
+            from_key = True
+        elif opt == "--client" and argv:
+            client = argv.pop(0)
+        else:
+            raise Abort(f"unknown option {opt}")
+    if argv == ["status"]:
+        return run_status()
+    if not argv or argv[0] not in REAL:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    if from_key:
+        if not client:
+            raise Abort("--key needs --client")
+        return run_from_key(argv[0], argv[1:], client)
+    return run_interactive(argv[0], argv[1:], confirm)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except Abort as err:
+        print(f"tmux-kill-guard: {err}", file=sys.stderr)
+        if sys.stdin.isatty() and "TMUX" in os.environ and not os.environ.get("TMUX_PANE"):
+            # Inside a popup that closes on exit: keep the error readable.
+            input("\n Press Enter to close.")
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(130)
